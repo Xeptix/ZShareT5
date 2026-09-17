@@ -4,6 +4,8 @@
         install.bat                 show what it will do, ask once, copy
         install.bat -Yes            copy without asking
         install.bat -Game t6,t7     only these games, from a download with several
+        install.bat -To D:\Games\Call of Duty Black Ops III
+                                    use this game folder, when it is not found
         install.bat -Uninstall      remove what an install put there
         install.bat -Find           show what it detects, change nothing
 
@@ -25,10 +27,17 @@
     asking, and -Yes takes every game found.
 
     A route installs only when the client it is for is there. Each one names
-    an anchor -- a folder that has to exist already -- and the installer
-    creates what is missing below it and nothing above it, so it never
-    invents a T7x folder for somebody who does not play T7x, or a Black Ops
-    folder for somebody who has only ever launched Black Ops II.
+    its anchors -- a folder or an exe, any one of which has to exist already
+    -- and the installer creates what is missing below the root and nothing
+    above it, so it never invents a T7x folder for somebody who does not
+    play T7x, or a Black Ops folder for somebody who has only ever launched
+    Black Ops II.
+
+    Black Ops III can be several folders, one per client: "... BOIII",
+    "... EzzBOIII", "... T7x" beside the plain one. A copy whose client
+    folder links back into the plain folder is already covered by it; a copy
+    with a client folder of its own gets that client's route again, aimed at
+    it. Ezz BOIII kept that way has no other place ZShare can live.
 
     Two routes it leaves alone on purpose. The t7-compiler project lives
     wherever you keep it, so there is nothing to find. And the Steam Workshop
@@ -42,7 +51,8 @@ param(
     [switch]$Yes,
     [switch]$Uninstall,
     [switch]$Find,
-    [string]$Game = ''
+    [string]$Game = '',
+    [string]$To = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -118,14 +128,15 @@ function Steam-Roots {
 
 <#
     Every folder that could hold a game, whether Steam knows about it or
-    not: each Steam library's common folder, and the usual places on every
-    fixed drive.
+    not: each Steam library's common folder, every fixed drive's own root,
+    and the usual places on every fixed drive.
 #>
 function Candidate-Parents {
     $out = @()
     foreach ($s in (Steam-Roots)) { $out += (Path-Join $s 'steamapps\common') }
     foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
         if ($d.DriveType -ne 'Fixed' -or -not $d.IsReady) { continue }
+        $out += $d.RootDirectory.FullName
         foreach ($sub in @('Steam\steamapps\common', 'SteamLibrary\steamapps\common',
                            'Program Files (x86)\Steam\steamapps\common',
                            'Games', 'COD', 'Call of Duty')) {
@@ -136,15 +147,34 @@ function Candidate-Parents {
 }
 
 <#
-    The folder a game lives in, found by the executable only it has.
+    What a folder has to hold to be that game's. Any one will do: a Black
+    Ops III folder may carry only boiii.exe or t7x.exe when it is a
+    client-only install, and Plutonium is the folder with storage in it.
+#>
+$MARKERS = @{
+    'pluto' = @('storage')
+    'bo3'   = @('BlackOps3.exe', 'boiii.exe', 't7x.exe')
+    'bo4'   = @('BlackOps4.exe')
+}
+
+function Is-Root($family, $path) {
+    if (-not $path -or -not $MARKERS.ContainsKey($family)) { return $false }
+    foreach ($m in $MARKERS[$family]) {
+        if (Test-Here (Path-Join $path $m)) { return $true }
+    }
+    return $false
+}
+
+<#
+    The folder a game lives in.
 
     Several can match, because a player can keep one folder per client --
-    "... BOIII", "... T7x" beside the plain one, with their folders
-    junctioned back to it. The plainly named one is preferred: it holds the
-    real folders, and a per-client copy only ever adds a suffix. The mod
-    tools, app 455130, are not a game.
+    "... BOIII", "... T7x" beside the plain one. The plainly named one is
+    preferred: it holds the real folders, and a per-client copy only ever
+    adds a suffix. Copies with a client folder of their own are found again
+    by Client-Copies. The mod tools, app 455130, are not a game.
 #>
-function Find-Game($exe, $like) {
+function Find-Game($family, $like) {
     $hits = @()
     foreach ($parent in (Candidate-Parents)) {
         try {
@@ -152,11 +182,34 @@ function Find-Game($exe, $like) {
         } catch { continue }
         foreach ($d in $dirs) {
             if ($d.Name -notlike $like -or $d.Name -like '*455130*') { continue }
-            if (Test-Here (Path-Join $d.FullName $exe)) { $hits += $d.FullName }
+            if (Is-Root $family $d.FullName) { $hits += $d.FullName }
         }
     }
     $hits = @($hits | Select-Object -Unique | Sort-Object { (Split-Path -Leaf $_).Length }, { $_ })
     if ($hits.Count -gt 0) { return $hits[0] }
+    return $null
+}
+
+# Plutonium keeps itself in %LOCALAPPDATA%, unless somebody put it elsewhere.
+function Find-Pluto {
+    $places = @((Path-Join $env:LOCALAPPDATA 'Plutonium'), (Path-Join $env:APPDATA 'Plutonium'))
+    foreach ($d in [System.IO.DriveInfo]::GetDrives()) {
+        if ($d.DriveType -ne 'Fixed' -or -not $d.IsReady) { continue }
+        foreach ($sub in @('Plutonium', 'Games\Plutonium', 'Program Files\Plutonium',
+                           'Program Files (x86)\Plutonium', 'Steam\Plutonium',
+                           'SteamLibrary\Plutonium')) {
+            $places += (Path-Join $d.RootDirectory.FullName $sub)
+        }
+    }
+    foreach ($p in $places) { if (Is-Root 'pluto' $p) { return $p } }
+    return $null
+}
+
+# The folder -To names, when it is this game's.
+function To-Root($family) {
+    if (-not $To) { return $null }
+    $t = $To.Trim().Trim('"').TrimEnd('\')
+    if (Is-Root $family $t) { return $t }
     return $null
 }
 
@@ -165,16 +218,77 @@ $script:found = @{}
 function Root-Of($family) {
     if ($script:found.ContainsKey($family)) { return $script:found[$family] }
 
-    $root = switch ($family) {
-        'pluto'   { Path-Join $env:LOCALAPPDATA 'Plutonium' }
-        'appdata' { $env:LOCALAPPDATA }
-        'bo3'     { Find-Game 'BlackOps3.exe' '*Black Ops III*' }
-        'bo4'     { Find-Game 'BlackOps4.exe' '*' }
+    $root = To-Root $family
+    if (-not $root) {
+        $root = switch ($family) {
+            'pluto'   { Find-Pluto }
+            'appdata' { $env:LOCALAPPDATA }
+            'bo3'     { Find-Game 'bo3' '*Black Ops III*' }
+            'bo4'     { Find-Game 'bo4' '*' }
+        }
     }
 
     if ($root -and -not (Test-Here $root)) { $root = $null }
     $script:found[$family] = $root
     return $root
+}
+
+<#
+    The folder a path really is, through any junction or symlink on the way.
+
+    Neither Resolve-Path nor [IO.Path]::GetFullPath follows a junction on
+    Windows PowerShell 5.1, so this walks the path a component at a time and
+    asks each for its Target. A component that does not exist yet stops the
+    walk and keeps the rest as written.
+#>
+function Real-Path($p) {
+    if (-not $p) { return $p }
+    $root = [IO.Path]::GetPathRoot($p)
+    $cur = $root
+    foreach ($part in @($p.Substring($root.Length) -split '[\\/]' | Where-Object { $_ })) {
+        $cur = Path-Join $cur $part
+        for ($hop = 0; $hop -lt 8; $hop++) {
+            try { $it = Get-Item -LiteralPath $cur -Force -ErrorAction Stop } catch { break }
+            if (-not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { break }
+            $next = @($it.Target)[0]
+            if (-not $next) { break }
+            if (-not [IO.Path]::IsPathRooted($next)) { $next = Path-Join (Split-Path -Parent $cur) $next }
+            $cur = $next
+        }
+    }
+    return $cur
+}
+
+<#
+    The per-client copies of Black Ops III beside the one found: every
+    folder whose name starts with its name and carries a client -- its exe
+    or its folder -- whose folder is not a link back into the one found. A
+    copy linked back is covered already; one with a folder of its own is an
+    install target that nothing else would write to.
+#>
+function Client-Copies {
+    $out = @()
+    $hub = Root-Of 'bo3'
+    if (-not $hub) { return $out }
+    $parent = Split-Path -Parent $hub
+    $leaf = Split-Path -Leaf $hub
+    if (-not $parent -or -not (Test-Here $parent)) { return $out }
+    $copies = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne $leaf -and $_.Name.StartsWith($leaf) -and $_.Name -notlike '*455130*' } |
+                Sort-Object Name)
+    $seen = @{}
+    foreach ($c in $copies) {
+        foreach ($client in @('boiii', 't7x')) {
+            if (-not (Test-Here (Path-Join $c.FullName ($client + '.exe'))) -and
+                -not (Test-Here (Path-Join $c.FullName $client))) { continue }
+            $real = (Real-Path (Path-Join $c.FullName $client)).ToLowerInvariant()
+            $hubs = (Real-Path (Path-Join $hub $client)).ToLowerInvariant()
+            if ($real -eq $hubs -or $seen.ContainsKey($real)) { continue }
+            $seen[$real] = $true
+            $out += [pscustomobject]@{ Name = $c.Name; Path = $c.FullName; Client = $client }
+        }
+    }
+    return $out
 }
 
 # ------------------------------------------------------------ the games
@@ -211,28 +325,30 @@ function Game-Key($word) {
         Top      the folder in the download
         Family   which root it installs under
         Into     where under that root the folder's contents land
-        Anchor   what has to exist already -- below it, missing folders are
-                 created; if it is not there, the client is not installed
-                 and the route is skipped
+        Anchor   what has to exist already, any one of them -- below the
+                 root, missing folders are created; if none is there, the
+                 client is not installed and the route is skipped
+        Client   the Black Ops III client a game-folder route belongs to, so
+                 a per-client copy of the game gets that route again
 
     Plutonium makes a game's storage folder the first time that game is
     launched, which is what makes it the anchor for each of the three.
 #>
 $ROUTES = @(
     @{ Game = 't6'; Top = 'Plutonium\storage\t6'; Family = 'pluto';   Into = 'storage\t6';
-       Anchor = 'storage\t6';       Label = 'Black Ops II' }
+       Anchor = @('storage\t6');         Label = 'Black Ops II' }
     @{ Game = 't5'; Top = 'Plutonium\storage\t5'; Family = 'pluto';   Into = 'storage\t5';
-       Anchor = 'storage\t5';       Label = 'Black Ops' }
+       Anchor = @('storage\t5');         Label = 'Black Ops' }
     @{ Game = 't4'; Top = 'Plutonium\storage\t4'; Family = 'pluto';   Into = 'storage\t4';
-       Anchor = 'storage\t4';       Label = 'World at War' }
+       Anchor = @('storage\t4');         Label = 'World at War' }
     @{ Game = 't7'; Top = 'Black Ops III';        Family = 'bo3';     Into = '';
-       Anchor = 'boiii';            Label = 'Black Ops III -- BOIII / Ezz BOIII' }
+       Anchor = @('boiii', 'boiii.exe'); Label = 'Black Ops III -- BOIII / Ezz BOIII'; Client = 'boiii' }
     @{ Game = 't7'; Top = 'AppData';              Family = 'appdata'; Into = '';
-       Anchor = 'boiii\data';       Label = 'Black Ops III -- BOIII per user' }
+       Anchor = @('boiii\data');         Label = 'Black Ops III -- BOIII per user' }
     @{ Game = 't7'; Top = 't7x';                  Family = 'bo3';     Into = 't7x';
-       Anchor = 't7x';              Label = 'Black Ops III -- T7x' }
+       Anchor = @('t7x', 't7x.exe');     Label = 'Black Ops III -- T7x'; Client = 't7x' }
     @{ Game = 't8'; Top = 'zshare';               Family = 'bo4';     Into = 'project-bo4\mods\zshare';
-       Anchor = 'project-bo4\mods'; Label = 'Black Ops 4 -- Shield' }
+       Anchor = @('project-bo4\mods');   Label = 'Black Ops 4 -- Shield' }
 )
 
 <#
@@ -241,18 +357,41 @@ $ROUTES = @(
     plan, marked, so -Find and the prompt can say why it was skipped.
 #>
 function Build-Plan($download) {
+    $routes = @($ROUTES)
+
+    # A per-client copy of Black Ops III gets its client's route again,
+    # aimed at that copy -- looked for only when this download carries
+    # Black Ops III at all.
+    if (@($ROUTES | Where-Object { $_.Client -and (Test-Here (Path-Join $download $_.Top)) }).Count -gt 0) {
+        foreach ($copy in @(Client-Copies)) {
+            foreach ($r in @($ROUTES | Where-Object { $_.Client -eq $copy.Client })) {
+                $clone = @{}
+                foreach ($k in $r.Keys) { $clone[$k] = $r[$k] }
+                $clone.Root = $copy.Path
+                $clone.Label = $r.Label + ', in ' + $copy.Name
+                $routes += $clone
+            }
+        }
+        # Kept with the rest of Black Ops III rather than after Black Ops 4.
+        $ordered = @()
+        foreach ($g in $GAMES) { $ordered += @($routes | Where-Object { $_.Game -eq $g.Key }) }
+        $routes = $ordered
+    }
+
     $plan = @()
-    foreach ($r in $ROUTES) {
+    foreach ($r in $routes) {
         $src = Path-Join $download $r.Top
         if (-not (Test-Here $src)) { continue }
 
-        $root = Root-Of $r.Family
+        $root = if ($r.Root) { $r.Root } else { Root-Of $r.Family }
         $ready = $false
         $dest = $null
 
         if ($root) {
-            $anchor = if ($r.Anchor) { Path-Join $root $r.Anchor } else { $root }
-            $ready = Test-Here $anchor
+            foreach ($a in @($r.Anchor)) {
+                $at = if ($a) { Path-Join $root $a } else { $root }
+                if (Test-Here $at) { $ready = $true; break }
+            }
             $dest = if ($r.Into) { Path-Join $root $r.Into } else { $root }
         }
 
@@ -383,6 +522,14 @@ if (-not $download) {
 
 $release = Read-Release $download
 Say ("{0} v{1}" -f $release['name'], $release['version']) DarkGray
+
+if ($To -and -not (@('pluto', 'bo3', 'bo4') | Where-Object { To-Root $_ })) {
+    Write-Host ''
+    Say "That is not a game folder ZShare knows: $To" Red
+    Say 'Plutonium is the folder with storage in it, Black Ops III the one with' Red
+    Say 'BlackOps3.exe, boiii.exe or t7x.exe, and Black Ops 4 the one with BlackOps4.exe.' Red
+    exit 1
+}
 
 $all = @(Build-Plan $download)
 

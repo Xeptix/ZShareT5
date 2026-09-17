@@ -1,6 +1,6 @@
 /*
 ======================================================================
-    ZSHARE T5 v1.0  --  Weapon sharing for Black Ops Zombies
+    ZSHARE T5 v1.1  --  Weapon sharing for Black Ops Zombies
     Plutonium T5
 
     by Xep
