@@ -383,6 +383,10 @@ install.
 
 ## Changelog
 
+### v1.2
+
+- No changes to this port. The version moves with the other four.
+
 ### v1.1
 
 - No changes to this port. The version moves with the other four.
