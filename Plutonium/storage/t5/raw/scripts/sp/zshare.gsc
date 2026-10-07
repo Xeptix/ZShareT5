@@ -1,6 +1,6 @@
 /*
 ======================================================================
-    ZSHARE T5 v1.2  --  Weapon sharing for Black Ops Zombies
+    ZSHARE T5 v1.3  --  Weapon sharing for Black Ops Zombies
     Plutonium T5
 
     by Xep
@@ -111,6 +111,18 @@ init()
     level.zs_loaded = 1;
 
     zs_load_config();
+
+    /*
+        Switched off. The descriptor still goes up, because "not
+        installed" and "installed and switched off" are different answers
+        to a mod asking what ZShare is doing in this match.
+    */
+    if ( !level.zs.enabled )
+    {
+        zs_api_register( 0 );
+        return;
+    }
+
     zs_functions();
 
     level.zs_triggers = [];
@@ -122,6 +134,9 @@ init()
     level thread zs_config_watcher();
     level thread zs_config_printer();
     level thread zs_build_watermark();
+
+    // Last, so the first thing that reads it finds a mod already up.
+    zs_api_register( 1 );
 }
 
 
@@ -255,6 +270,21 @@ zs_load_config()
     // script variable, and this runs on every press.
     if ( !isdefined( level.zs ) )
         level.zs = spawnstruct();
+
+    // --- general ---------------------------------------------------
+
+    /*
+        ZShare itself. On by default. Off, the script still loads, still
+        says so on level.zmods -- with enabled 0 -- and does nothing else:
+        no prompts, no hooks over the stock scripts, no chat words and no
+        threads. The match runs as it would with the file gone.
+
+        Read once, as the match loads. Taking prompts off players and
+        handing replaced stock functions back is not something a switch
+        can do safely in the middle of a game, so this one lands on the
+        next match -- which is what a bundle's MODS page says about it.
+    */
+    level.zs.enabled = zs_cfg_int( "zs_enabled", 1 );
 
     // --- debug -----------------------------------------------------
 
@@ -463,13 +493,40 @@ zs_chat_listener()
 */
 zs_word_after( msg, token )
 {
-    if ( getsubstr( msg, 0, token.size ) == token )
+    /*
+        getsubstr()'s third argument is where to stop, not how many
+        characters to take -- stock reads a map name with
+        getsubstr( mapname, 3, mapname.size ) and chops three characters
+        with getsubstr( weapon, 0, weapon.size - 3 ). Given token.size
+        there, the skipped-character form compared one character too few
+        and never matched, so !tip was dead on any client that puts a
+        character in front of the message.
+
+        And the word has to end where the token does: "!tipsy" is not
+        "!tip", and reading its "sy" as an amount is how a chat line
+        nobody meant for ZShare reached the tip code.
+    */
+    if ( zs_word_starts( msg, 0, token ) )
         return zs_trim( getsubstr( msg, token.size ) );
 
-    if ( msg.size > 1 && getsubstr( msg, 1, token.size ) == token )
+    if ( msg.size > 1 && zs_word_starts( msg, 1, token ) )
         return zs_trim( getsubstr( msg, 1 + token.size ) );
 
     return undefined;
+}
+
+zs_word_starts( msg, at, token )
+{
+    end = at + token.size;
+
+    if ( msg.size < end )
+        return 0;
+
+    if ( getsubstr( msg, at, end ) != token )
+        return 0;
+
+    // The whole message, or a space after it.
+    return msg.size == end || getsubstr( msg, end, end + 1 ) == " ";
 }
 
 zs_trim( s )
@@ -2629,7 +2686,7 @@ zs_chest_paid_used( user )
     if ( isdefined( user ) && isdefined( paid["by"] ) && user != paid["by"] )
     {
         user zs_say( "^3" + paid["name"] + "^7 paid for this spin" );
-        user zs_favour_note( payer );
+        user zs_favour_note( paid["by"] );
         paid["by"] zs_say( "^3" + user.name + "^7 used the spin you paid for" );
     }
 
@@ -2899,15 +2956,22 @@ zs_pap_upgrade()
             continue;
         }
 
-        // ZShare: a pack bought at the price a payment is holding at zero
-        // is the payment used, and the price goes back before anyone else
-        // can press.
-        if ( is_true( self.zs_zeroed ) && self.cost == 0 )
-            self zs_pap_paid_used( player );
+        /*
+            ZShare: a pack bought at the price a payment is holding at
+            zero is the payment used, and the price goes back afterwards
+            -- marking it used puts the price back there and then, and
+            charging self.cost after that charged this player the full
+            price for the pack they were told was free.
+        */
+        cost = self.cost;
+        paid_pack = is_true( self.zs_zeroed ) && cost == 0;
 
         flag_set( "pack_machine_in_use" );
 
-        player [[ level.zs_f_score_minus ]]( self.cost );
+        player [[ level.zs_f_score_minus ]]( cost );
+
+        if ( paid_pack )
+            self zs_pap_paid_used( player );
         playsoundatposition( "evt_bottle_dispense", self.origin );
 
         self thread [[ level.zs_f_jingle ]]( "mus_perks_packa_sting" );
@@ -3871,6 +3935,97 @@ zs_game_ready()
         return 0;
 
     return isdefined( level.round_number );
+}
+
+
+/* ==================================================================
+    THE SHARED MOD API
+
+    Xep's mods find each other on level.zmods: an array keyed by mod id,
+    each key a struct saying what that mod is and handing over the few
+    things another mod may ask it to do. ZShare's goes up as the script
+    finishes loading, and again -- saying enabled 0 -- when zs_enabled is
+    off, since "not installed" and "installed and switched off" are
+    different answers.
+
+    api_version 1 is this. The descriptor is the contract: level.zs is
+    ZShare's own struct and may move.
+   ================================================================== */
+
+/*
+    The version on its own -- no build time, no origin -- because that is
+    what the descriptor carries for another mod to read. Written by
+    tools/build.py between the markers; never edit it by hand.
+*/
+zs_version()
+{
+    // ZS_VERSION_BEGIN
+    return "1.3";
+    // ZS_VERSION_END
+}
+
+/*
+    The descriptor. Written into whatever registry is already there --
+    another mod may have made it first, and replacing the array would be
+    that mod's entry gone.
+*/
+zs_api_register( benabled )
+{
+    if ( !isdefined( level.zmods ) )
+        level.zmods = [];
+
+    if ( !isdefined( level.zmods[ "zshare" ] ) )
+        level.zmods[ "zshare" ] = spawnstruct();
+
+    mod = level.zmods[ "zshare" ];
+
+    mod.id = "zshare";
+    mod.display_name = "ZShare";
+    mod.version = zs_version();
+    mod.api_version = 1;
+    mod.settings_manifest_version = 1;
+    mod.enabled = benabled;
+
+    mod.reload_config = ::zs_api_reload_config;
+    mod.get_stock_perk_limit = ::zs_api_stock_perk_limit;
+    mod.get_effective_perk_limit = ::zs_api_effective_perk_limit;
+}
+
+/*
+    Read the settings again -- for a mod that has just written one of
+    ZShare's dvars and wants it to count now rather than at the next
+    press. 1 when there was something to read.
+*/
+zs_api_reload_config()
+{
+    if ( !is_true( level.zs_loaded ) || !isdefined( level.zs ) || !level.zs.enabled )
+        return 0;
+
+    zs_load_config();
+    return 1;
+}
+
+/*
+    The limit the map would give this player if ZShare were not here.
+    Black Ops exposes no callback to keep -- every map with perks has four
+    machines and no map hands out a fifth slot -- so the stock limit is
+    that four, which is what zs_perk_limit_for() falls back to.
+*/
+zs_api_stock_perk_limit( player )
+{
+    return 4;
+}
+
+/*
+    And the limit ZShare is actually holding the map to. Where its gate is
+    not installed, which is zs_enabled 0, the honest answer is the map's own.
+*/
+zs_api_effective_perk_limit( player )
+{
+    if ( !is_true( level.zs_loaded ) || !isdefined( level.zs ) || !level.zs.enabled )
+        return zs_api_stock_perk_limit( player );
+
+    return zs_perk_limit_for( player );
 }
 
 

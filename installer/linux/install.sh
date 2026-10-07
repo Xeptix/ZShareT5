@@ -62,7 +62,18 @@ while [ $# -gt 0 ]; do
         --game=*)                  GAME_ARG="${1#--game=}" ;;
         --game|-Game)              shift; GAME_ARG="${1:-}" ;;
         --to=*)                    TO_ARG="${1#--to=}" ;;
-        --to|-To)                  shift; TO_ARG="${1:-}" ;;
+        --to|-To|-t)               shift; TO_ARG="${1:-}" ;;
+        -u)                        UNINSTALL=1 ;;
+        -f)                        FIND=1 ;;
+        -g)                        shift; GAME_ARG="${1:-}" ;;
+        *)
+            # Refused rather than ignored: install.ps1 reads -u as
+            # -Uninstall, so a flag dropped silently here is the twins
+            # doing opposite things with the same command line.
+            printf '\n  Not an option: %s\n' "$1"
+            printf '  Try --yes, --game, --to, --uninstall or --find.\n\n'
+            exit 1
+            ;;
     esac
     [ $# -gt 0 ] && shift
 done
@@ -190,7 +201,12 @@ find_game() {  # find_game <family> <glob>
     for d in "${CANDS[@]-}"; do
         is_root "$family" "$d" || continue
         case "$d" in *455130*) continue ;; esac
-        if [ -z "$best" ] || [ "${#d}" -lt "${#best}" ]; then best="$d"; fi
+        # By folder name, not by whole path -- install.ps1 sorts by the
+        # leaf, and comparing paths picked a per-client copy in a shorter
+        # parent over the plain folder.
+        name="$(basename "$d")"
+        best_name="$(basename "${best:-}")"
+        if [ -z "$best" ] || [ "${#name}" -lt "${#best_name}" ]; then best="$d"; fi
     done
     printf '%s' "$best"
 }
@@ -257,9 +273,17 @@ client_copies() {
     [ -n "$hub" ] || return 0
     parent="$(dirname "$hub")"; leaf="$(basename "$hub")"
     [ -d "$parent" ] || return 0
-    for c in "$parent/$leaf"*; do
+    # Either way round: the folder found is usually the plain one and a
+    # copy adds a suffix, but on a machine with no plain folder it is
+    # itself a copy and the one beside it starts with the plain name.
+    for c in "$parent"/*; do
         [ -d "$c" ] || continue
-        [ "$(basename "$c")" = "$leaf" ] && continue
+        name="$(basename "$c")"
+        [ "$name" = "$leaf" ] && continue
+        case "$name" in
+            "$leaf"*) ;;
+            *) case "$leaf" in "$name"*) ;; *) continue ;; esac ;;
+        esac
         case "$c" in *455130*) continue ;; esac
         for cl in boiii t7x; do
             [ -e "$c/$cl.exe" ] || [ -e "$c/$cl" ] || continue

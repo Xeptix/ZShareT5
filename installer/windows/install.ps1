@@ -47,6 +47,10 @@
     never a folder, and never anything ZShare did not put there.
 #>
 
+# Nothing binds by position: a bare path after -Find is the natural guess
+# for somebody who has not read -To, and it bound to -Game instead, which
+# refused it as a game name nobody had heard of.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$Yes,
     [switch]$Uninstall,
@@ -273,8 +277,15 @@ function Client-Copies {
     $parent = Split-Path -Parent $hub
     $leaf = Split-Path -Leaf $hub
     if (-not $parent -or -not (Test-Here $parent)) { return $out }
+    <#
+        Either way round: the folder found is usually the plain one and a
+        copy adds a suffix, but on a machine with no plain folder it is
+        itself a copy -- "... T7x" -- and the "... BOIII" beside it starts
+        with the plain name, not with this one.
+    #>
     $copies = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne $leaf -and $_.Name.StartsWith($leaf) -and $_.Name -notlike '*455130*' } |
+                Where-Object { $_.Name -ne $leaf -and $_.Name -notlike '*455130*' -and
+                               ($_.Name.StartsWith($leaf) -or $leaf.StartsWith($_.Name)) } |
                 Sort-Object Name)
     $seen = @{}
     foreach ($c in $copies) {
