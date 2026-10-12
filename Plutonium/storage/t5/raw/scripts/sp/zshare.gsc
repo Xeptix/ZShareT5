@@ -1,6 +1,6 @@
 /*
 ======================================================================
-    ZSHARE T5 v1.3  --  Weapon sharing for Black Ops Zombies
+    ZSHARE T5 v1.4  --  Weapon sharing for Black Ops Zombies
     Plutonium T5
 
     by Xep
@@ -41,7 +41,7 @@
     Pack-a-Punch's are replaced outright, and a paid drink is poured by
     ZShare's own prompt through the stock drinking code -- and a weapon
     is read and given piece by piece. What a player sees and does is the
-    same. docs/porting-t5.md in the project has the detail.
+    same.
 
 ----------------------------------------------------------------------
     VERIFICATION
@@ -1780,7 +1780,7 @@ zs_tip( rest )
 }
 
 /*
-    The player a typed name means. Case and colour codes are ignored and
+    The player a typed name means. Case and color codes are ignored and
     a prefix is enough, but a name that matches nobody -- or more than
     one -- is refused rather than guessed at: somebody typing a name
     means that player, and sending their points to another is worse than
@@ -1827,7 +1827,7 @@ zs_player_named( name, asker )
     return found;
 }
 
-// A name with the colour codes taken out, so typing it plainly matches.
+// A name with the color codes taken out, so typing it plainly matches.
 zs_plain_name( name )
 {
     out = "";
@@ -3960,7 +3960,7 @@ zs_game_ready()
 zs_version()
 {
     // ZS_VERSION_BEGIN
-    return "1.3";
+    return "1.4";
     // ZS_VERSION_END
 }
 

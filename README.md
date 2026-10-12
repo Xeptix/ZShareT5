@@ -6,7 +6,9 @@ by Xep
 
 [**Download the latest release**](https://github.com/Xeptix/ZShareT5/releases/latest)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F6L1285ROA)
+[![Support the mod on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F6L1285ROA)
+[![Support the mod on Patreon](https://img.shields.io/badge/Patreon-Xeptix-F96854?logo=patreon&logoColor=white)](https://www.patreon.com/Xeptix)
+[![Join the Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/RE85HRwYZZ)
 
 Trade guns with a teammate, hand them points, give away a box hit or a Pack-a-Punch you
 don't want, and pay for a teammate's perk, spin or pack. All of it from the use button,
@@ -387,6 +389,11 @@ install.
 ---
 
 ## Changelog
+
+### v1.4
+
+- **A Discord**, linked at the top of this README beside Ko-fi and Patreon, for questions,
+  bugs and ideas.
 
 ### v1.3
 
